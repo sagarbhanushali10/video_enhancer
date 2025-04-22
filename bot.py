@@ -92,6 +92,9 @@ def enhance_video(input_path, output_path, resolution, update: Update, is_callba
         # Regex to parse FFmpeg progress
         time_regex = re.compile(r"time=(\d+:\d+:\d+\.\d+)")
 
+        # Track the last updated progress percentage
+        last_progress_percent = -1
+
         while True:
             line = process.stdout.readline()
             if not line:
@@ -107,11 +110,16 @@ def enhance_video(input_path, output_path, resolution, update: Update, is_callba
                 # Calculate progress percentage
                 progress_percent = min(int((current_seconds / total_duration) * 100), 100)
 
-                # Update progress message
-                if is_callback_query:
-                    progress_message.edit_text(f"Processing video... {progress_percent}% complete")
-                else:
-                    progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+                # Only update the message if the progress percentage has changed
+                if progress_percent != last_progress_percent:
+                    # Update progress message
+                    if is_callback_query:
+                        progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+                    else:
+                        progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+
+                    # Update the last progress percentage
+                    last_progress_percent = progress_percent
 
         # Wait for FFmpeg to finish
         process.wait()
