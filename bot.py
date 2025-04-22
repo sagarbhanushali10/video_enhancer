@@ -1,6 +1,7 @@
 import os
 import subprocess
 import logging
+import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
 from dotenv import load_dotenv
@@ -35,25 +36,83 @@ def get_video_resolution(video_path):
         logger.error(f"Error detecting resolution: {str(e)}")
         raise ValueError(f"Error detecting resolution: {str(e)}")
 
-# Function to enhance video resolution
-def enhance_video(input_path, output_path, resolution):
+# Function to get video duration
+def get_video_duration(video_path):
+    try:
+        command = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path
+        ]
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        duration = float(result.stdout.strip())
+        return duration
+    except Exception as e:
+        logger.error(f"Error getting video duration: {str(e)}")
+        raise ValueError(f"Error getting video duration: {str(e)}")
+
+# Function to enhance video resolution with progress updates
+def enhance_video(input_path, output_path, resolution, update: Update):
     try:
         width, height = resolution.split("x")
-        scale_width = int(width) * 2  # Example: Upscale by 2x
-        scale_height = int(height) * 2
+        scale_width = int(width)
+        scale_height = int(height)
 
+        # Get total video duration
+        total_duration = get_video_duration(input_path)
+
+        # FFmpeg command
         command = [
             "ffmpeg",
             "-i", input_path,
             "-vf", f"scale={scale_width}:{scale_height}",  # Resize to target resolution
             "-c:v", "libx264",  # Use H.264 codec
-            "-preset", "fast",  # Faster encoding
+            "-preset", "ultrafast",  # Faster encoding
+            "-b:v", "1M",  # Set a maximum bitrate (e.g., 1 Mbps)
             output_path
         ]
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg error: {str(e)}")
-        raise RuntimeError(f"FFmpeg processing failed: {str(e)}")
+
+        # Start FFmpeg process
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+
+        # Send initial progress message
+        progress_message = update.message.reply_text("Processing video... 0% complete")
+
+        # Regex to parse FFmpeg progress
+        time_regex = re.compile(r"time=(\d+:\d+:\d+\.\d+)")
+
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+
+            # Parse progress from FFmpeg output
+            match = time_regex.search(line)
+            if match:
+                time_str = match.group(1)
+                hours, minutes, seconds = map(float, time_str.split(":"))
+                current_seconds = hours * 3600 + minutes * 60 + seconds
+
+                # Calculate progress percentage
+                progress_percent = min(int((current_seconds / total_duration) * 100), 100)
+
+                # Update progress message
+                progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+
+        # Wait for FFmpeg to finish
+        process.wait()
+
+        if process.returncode != 0:
+            raise RuntimeError("FFmpeg processing failed.")
+
+        logger.info("FFmpeg processing completed successfully.")
     except Exception as e:
         logger.error(f"Error enhancing video: {str(e)}")
         raise RuntimeError(f"Error enhancing video: {str(e)}")
@@ -91,8 +150,7 @@ def handle_video(update: Update, context: CallbackContext):
         keyboard = [
             [InlineKeyboardButton("720p", callback_data="720"),
              InlineKeyboardButton("1080p", callback_data="1080")],
-            [InlineKeyboardButton("2K", callback_data="1440"),
-             InlineKeyboardButton("4K", callback_data="2160")]
+            [InlineKeyboardButton("2K", callback_data="1440")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         update.message.reply_text(
@@ -125,13 +183,12 @@ def handle_resolution_selection(update: Update, context: CallbackContext):
         resolution_map = {
             "720": "1280x720",
             "1080": "1920x1080",
-            "1440": "2560x1440",
-            "2160": "3840x2160"
+            "1440": "2560x1440"
         }
         target_resolution = resolution_map[selected_resolution]
 
         # Enhance video
-        enhance_video(input_path, output_path, target_resolution)
+        enhance_video(input_path, output_path, target_resolution, update)
 
         # Send enhanced video
         with open(output_path, "rb") as video_file:
