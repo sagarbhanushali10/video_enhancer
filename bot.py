@@ -1,7 +1,6 @@
 import os
 import subprocess
 import logging
-import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
 from dotenv import load_dotenv
@@ -36,41 +35,17 @@ def get_video_resolution(video_path):
         logger.error(f"Error detecting resolution: {str(e)}")
         raise ValueError(f"Error detecting resolution: {str(e)}")
 
-# Function to get video duration
-def get_video_duration(video_path):
-    try:
-        command = [
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            video_path
-        ]
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        duration = float(result.stdout.strip())
-        return duration
-    except Exception as e:
-        logger.error(f"Error getting video duration: {str(e)}")
-        raise ValueError(f"Error getting video duration: {str(e)}")
-
 # Function to enhance video resolution with progress updates
-def enhance_video(input_path, output_path, resolution, update: Update, is_callback_query=False):
+def enhance_video(input_path, output_path, update: Update, is_callback_query=False):
     try:
-        width, height = resolution.split("x")
-        scale_width = int(width)
-        scale_height = int(height)
-
-        # Get total video duration
-        total_duration = get_video_duration(input_path)
-
-        # FFmpeg command
+        # FFmpeg command with enhancement filters
         command = [
             "ffmpeg",
             "-i", input_path,
-            "-vf", f"scale={scale_width}:{scale_height}",  # Resize to target resolution
+            "-vf", "hqdn3d,unsharp",  # Apply denoising and sharpening filters
             "-c:v", "libx264",  # Use H.264 codec
-            "-preset", "ultrafast",  # Faster encoding
-            "-b:v", "1M",  # Set a maximum bitrate (e.g., 1 Mbps)
+            "-preset", "medium",  # Balanced encoding speed
+            "-crf", "18",  # High-quality encoding (lower CRF = better quality)
             output_path
         ]
 
@@ -85,12 +60,29 @@ def enhance_video(input_path, output_path, resolution, update: Update, is_callba
         # Send initial progress message
         if is_callback_query:
             query = update.callback_query
-            progress_message = query.message.reply_text("Processing video... 0% complete")
+            progress_message = query.message.reply_text("Enhancing video... 0% complete")
         else:
-            progress_message = update.message.reply_text("Processing video... 0% complete")
+            progress_message = update.message.reply_text("Enhancing video... 0% complete")
 
         # Regex to parse FFmpeg progress
         time_regex = re.compile(r"time=(\d+:\d+:\d+\.\d+)")
+        duration_regex = re.compile(r"Duration: (\d+:\d+:\d+\.\d+)")
+
+        # Extract total video duration
+        total_duration = None
+        while True:
+            line = process.stderr.readline() if process.stderr else ""
+            if not line:
+                break
+            match = duration_regex.search(line)
+            if match:
+                time_str = match.group(1)
+                hours, minutes, seconds = map(float, time_str.split(":"))
+                total_duration = hours * 3600 + minutes * 60 + seconds
+                break
+
+        if not total_duration:
+            raise ValueError("Could not determine video duration.")
 
         # Track the last updated progress percentage
         last_progress_percent = -1
@@ -114,9 +106,9 @@ def enhance_video(input_path, output_path, resolution, update: Update, is_callba
                 if progress_percent != last_progress_percent:
                     # Update progress message
                     if is_callback_query:
-                        progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+                        progress_message.edit_text(f"Enhancing video... {progress_percent}% complete")
                     else:
-                        progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+                        progress_message.edit_text(f"Enhancing video... {progress_percent}% complete")
 
                     # Update the last progress percentage
                     last_progress_percent = progress_percent
@@ -162,15 +154,13 @@ def handle_video(update: Update, context: CallbackContext):
         context.user_data['input_path'] = input_path
         context.user_data['current_resolution'] = current_resolution
 
-        # Send resolution options
+        # Send enhancement options
         keyboard = [
-            [InlineKeyboardButton("720p", callback_data="720"),
-             InlineKeyboardButton("1080p", callback_data="1080")],
-            [InlineKeyboardButton("2K", callback_data="1440")]
+            [InlineKeyboardButton("Enhance Quality", callback_data="enhance")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         update.message.reply_text(
-            f"Current resolution: {current_resolution}\nSelect the desired resolution:",
+            f"Current resolution: {current_resolution}\nClick 'Enhance Quality' to improve the video.",
             reply_markup=reply_markup
         )
     except ValueError as e:
@@ -184,31 +174,24 @@ def handle_video(update: Update, context: CallbackContext):
         if input_path and os.path.exists(input_path):  # Check if input_path exists before removing
             os.remove(input_path)
 
-# Handle resolution selection
+# Handle enhancement selection
 def handle_resolution_selection(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     try:
-        # Get selected resolution
-        selected_resolution = query.data
+        # Get selected option
+        selected_option = query.data
         input_path = context.user_data['input_path']
         output_path = "output.mp4"
 
-        # Map resolution to width x height
-        resolution_map = {
-            "720": "1280x720",
-            "1080": "1920x1080",
-            "1440": "2560x1440"
-        }
-        target_resolution = resolution_map[selected_resolution]
+        if selected_option == "enhance":
+            # Enhance video (pass query for callback handling)
+            enhance_video(input_path, output_path, update, is_callback_query=True)
 
-        # Enhance video (pass query for callback handling)
-        enhance_video(input_path, output_path, target_resolution, update, is_callback_query=True)
-
-        # Send enhanced video
-        with open(output_path, "rb") as video_file:
-            query.message.reply_video(video=video_file)
+            # Send enhanced video
+            with open(output_path, "rb") as video_file:
+                query.message.reply_video(video=video_file)
 
         # Clean up files
         os.remove(input_path)
