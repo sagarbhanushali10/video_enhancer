@@ -135,6 +135,7 @@ def handle_message(update: Update, context: CallbackContext):
 
 # Handle video processing
 def handle_video(update: Update, context: CallbackContext):
+    input_path = None  # Initialize input_path to avoid UnboundLocalError
     try:
         # Download the video
         file = update.message.video.get_file()
@@ -160,13 +161,13 @@ def handle_video(update: Update, context: CallbackContext):
     except ValueError as e:
         update.message.reply_text(f"Error: {str(e)}. Please try again with a valid video file.")
         logger.error(f"Error processing video: {str(e)}")
-        if os.path.exists("input.mp4"):
-            os.remove("input.mp4")
+        if input_path and os.path.exists(input_path):  # Check if input_path exists before removing
+            os.remove(input_path)
     except Exception as e:
         update.message.reply_text("An unexpected error occurred. Please try again later.")
         logger.error(f"Unexpected error: {str(e)}")
-        if os.path.exists("input.mp4"):
-            os.remove("input.mp4")
+        if input_path and os.path.exists(input_path):  # Check if input_path exists before removing
+            os.remove(input_path)
 
 # Handle resolution selection
 def handle_resolution_selection(update: Update, context: CallbackContext):
@@ -205,6 +206,13 @@ def handle_resolution_selection(update: Update, context: CallbackContext):
         if os.path.exists(output_path):
             os.remove(output_path)
 
+# Error handler
+def error_handler(update: Update, context: CallbackContext):
+    """Log the error and send a message to the user."""
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    if update and update.message:
+        update.message.reply_text("An unexpected error occurred. Please try again later.")
+
 # Main function
 def main():
     try:
@@ -221,6 +229,9 @@ def main():
         dispatcher.add_handler(CommandHandler("start", start))
         dispatcher.add_handler(MessageHandler(Filters.all, handle_message))
         dispatcher.add_handler(CallbackQueryHandler(handle_resolution_selection))
+
+        # Register error handler
+        dispatcher.add_error_handler(error_handler)
 
         # Start the bot
         logger.info("Starting the bot...")
