@@ -222,7 +222,7 @@ def main():
             logger.error("BOT_TOKEN environment variable is not set.")
             raise ValueError("BOT_TOKEN environment variable is not set.")
 
-        updater = Updater(bot_token)
+        updater = Updater(bot_token, use_context=True)
         dispatcher = updater.dispatcher
 
         # Register handlers
@@ -233,9 +233,14 @@ def main():
         # Register error handler
         dispatcher.add_error_handler(error_handler)
 
+        # Clear any pending updates to avoid conflicts
+        updater.bot.get_updates(offset=-1)
+
         # Start the bot
         logger.info("Starting the bot...")
         updater.start_polling()
+
+        # Run the bot until you press Ctrl-C
         updater.idle()
     except Exception as e:
         logger.error(f"Critical error starting the bot: {str(e)}")
