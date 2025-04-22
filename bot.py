@@ -54,7 +54,7 @@ def get_video_duration(video_path):
         raise ValueError(f"Error getting video duration: {str(e)}")
 
 # Function to enhance video resolution with progress updates
-def enhance_video(input_path, output_path, resolution, update: Update):
+def enhance_video(input_path, output_path, resolution, update: Update, is_callback_query=False):
     try:
         width, height = resolution.split("x")
         scale_width = int(width)
@@ -83,7 +83,11 @@ def enhance_video(input_path, output_path, resolution, update: Update):
         )
 
         # Send initial progress message
-        progress_message = update.message.reply_text("Processing video... 0% complete")
+        if is_callback_query:
+            query = update.callback_query
+            progress_message = query.message.reply_text("Processing video... 0% complete")
+        else:
+            progress_message = update.message.reply_text("Processing video... 0% complete")
 
         # Regex to parse FFmpeg progress
         time_regex = re.compile(r"time=(\d+:\d+:\d+\.\d+)")
@@ -104,7 +108,10 @@ def enhance_video(input_path, output_path, resolution, update: Update):
                 progress_percent = min(int((current_seconds / total_duration) * 100), 100)
 
                 # Update progress message
-                progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+                if is_callback_query:
+                    progress_message.edit_text(f"Processing video... {progress_percent}% complete")
+                else:
+                    progress_message.edit_text(f"Processing video... {progress_percent}% complete")
 
         # Wait for FFmpeg to finish
         process.wait()
@@ -188,8 +195,8 @@ def handle_resolution_selection(update: Update, context: CallbackContext):
         }
         target_resolution = resolution_map[selected_resolution]
 
-        # Enhance video
-        enhance_video(input_path, output_path, target_resolution, update)
+        # Enhance video (pass query for callback handling)
+        enhance_video(input_path, output_path, target_resolution, update, is_callback_query=True)
 
         # Send enhanced video
         with open(output_path, "rb") as video_file:
@@ -212,6 +219,8 @@ def error_handler(update: Update, context: CallbackContext):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
     if update and update.message:
         update.message.reply_text("An unexpected error occurred. Please try again later.")
+    elif update and update.callback_query:
+        update.callback_query.message.reply_text("An unexpected error occurred. Please try again later.")
 
 # Main function
 def main():
